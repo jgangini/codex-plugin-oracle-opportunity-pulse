@@ -61,9 +61,13 @@ TOOLS = [
     ),
     tool_schema(
         "scan_agent_data_outlook",
-        "Scan supplied received/sent Outlook messages for current-day @agent_data candidates.",
+        "Scan supplied received/sent Outlook messages for @agent_data candidates inside an incremental sync window.",
         {
             "today_only": {"type": "boolean", "default": True},
+            "scan_from": {"type": "string"},
+            "scan_to": {"type": "string"},
+            "executed_by_email": {"type": "string"},
+            "run_id": {"type": "string"},
             "include_received": {"type": "boolean", "default": True},
             "include_sent": {"type": "boolean", "default": True},
             "received_messages": {"type": "array", "items": {"type": "object"}},
@@ -73,9 +77,15 @@ TOOLS = [
     ),
     tool_schema(
         "scan_zoom_ai_companion",
-        "Scan supplied Zoom AI Companion Outlook messages from the [0] Zoom AI companion folder.",
+        "Scan supplied Zoom AI Companion Outlook messages from the exact [0] Zoom AI companion folder without requiring @agent_data.",
         {
             "today_only": {"type": "boolean", "default": True},
+            "scan_from": {"type": "string"},
+            "scan_to": {"type": "string"},
+            "executed_by_email": {"type": "string"},
+            "run_id": {"type": "string"},
+            "require_agent_tag": {"type": "boolean", "default": False},
+            "source_scope": {"type": "string", "default": core.DEFAULT_ZOOM_FOLDER},
             "messages": {"type": "array", "items": {"type": "object"}},
             "timezone": {"type": "string", "default": core.DEFAULT_TIMEZONE},
         },
@@ -154,6 +164,7 @@ TOOLS = [
             "templates_folder": {"type": "string"},
             "opportunities_list": {"type": "string", "default": "Opportunities"},
             "knowledge_items_list": {"type": "string", "default": "Knowledge Items"},
+            "automation_runs_list": {"type": "string", "default": core.DEFAULT_AUTOMATION_RUNS_LIST},
         },
     ),
     tool_schema(
@@ -168,6 +179,7 @@ TOOLS = [
             "root_folder": {"type": "string", "default": core.DEFAULT_ROOT_FOLDER},
             "opportunities_list": {"type": "string", "default": "Opportunities"},
             "knowledge_items_list": {"type": "string", "default": "Knowledge Items"},
+            "automation_runs_list": {"type": "string", "default": core.DEFAULT_AUTOMATION_RUNS_LIST},
             "timezone": {"type": "string", "default": core.DEFAULT_TIMEZONE},
             "zoom_folder": {"type": "string", "default": core.DEFAULT_ZOOM_FOLDER},
             "shared_profile": {"type": "object"},
@@ -197,6 +209,49 @@ TOOLS = [
             "name": {"type": "string"},
             "connector_status": {"type": "object"},
             "config_path": {"type": "string"},
+        },
+    ),
+    tool_schema(
+        "prepare_incremental_sync_window",
+        "Prepare the per-user/source/direction scan window from the last successful Automation Runs watermark.",
+        {
+            "user_email": {"type": "string"},
+            "executed_by_email": {"type": "string"},
+            "profile_name": {"type": "string"},
+            "source_type": {"type": "string", "enum": sorted(core.SOURCE_TYPES)},
+            "direction": {"type": "string", "enum": sorted(core.DIRECTIONS)},
+            "source_scope": {"type": "string"},
+            "timezone": {"type": "string", "default": core.DEFAULT_TIMEZONE},
+            "scan_from": {"type": "string"},
+            "scan_to": {"type": "string"},
+            "now": {"type": "string"},
+            "overlap_minutes": {"type": "integer", "default": core.DEFAULT_SYNC_OVERLAP_MINUTES},
+        },
+    ),
+    tool_schema(
+        "record_automation_run",
+        "Record one per-user/source/direction Automation Runs audit row and compute the next watermark.",
+        {
+            "run_id": {"type": "string"},
+            "user_email": {"type": "string"},
+            "executed_by_email": {"type": "string"},
+            "profile_name": {"type": "string"},
+            "source_type": {"type": "string", "enum": sorted(core.SOURCE_TYPES)},
+            "direction": {"type": "string", "enum": sorted(core.DIRECTIONS)},
+            "source_scope": {"type": "string"},
+            "scan_from": {"type": "string"},
+            "scan_to": {"type": "string"},
+            "started_at": {"type": "string"},
+            "finished_at": {"type": "string"},
+            "run_status": {"type": "string", "enum": sorted(core.RUN_STATUSES)},
+            "candidate_count": {"type": "integer"},
+            "approved_count": {"type": "integer"},
+            "rejected_count": {"type": "integer"},
+            "last_source_event_at": {"type": "string"},
+            "next_scan_from": {"type": "string"},
+            "error_summary": {"type": "string"},
+            "timezone": {"type": "string", "default": core.DEFAULT_TIMEZONE},
+            "overlap_minutes": {"type": "integer", "default": core.DEFAULT_SYNC_OVERLAP_MINUTES},
         },
     ),
     tool_schema(
@@ -279,12 +334,12 @@ TOOLS = [
     ),
     tool_schema(
         "provision_sharepoint_registry",
-        "Return dry-run Microsoft Graph payloads for the Opportunities and Knowledge Items lists.",
+        "Return dry-run Microsoft Graph payloads for the Opportunities, Knowledge Items, and Automation Runs lists.",
         {"dry_run": {"type": "boolean", "default": True}},
     ),
     tool_schema(
         "create_base_sharepoint_lists",
-        "Prepare the SharePoint Opportunities and Knowledge Items list creation/update plan.",
+        "Prepare the SharePoint Opportunities, Knowledge Items, and Automation Runs list creation/update plan.",
         {"dry_run": {"type": "boolean", "default": True}},
     ),
     tool_schema(
@@ -329,8 +384,11 @@ def call_register_slack_channel(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def call_scan_agent_data_outlook(args: dict[str, Any]) -> dict[str, Any]:
+    timezone = args.get("timezone", core.DEFAULT_TIMEZONE)
+    scan_from = args.get("scan_from")
+    scan_to = args.get("scan_to")
     result: dict[str, Any] = {
-        "outlook_scan_plan": core.outlook_scan_plan(args.get("timezone", core.DEFAULT_TIMEZONE)),
+        "outlook_scan_plan": core.outlook_scan_plan(timezone, scan_from, scan_to),
         "received": {"count": 0, "candidates": []},
         "sent": {"count": 0, "candidates": []},
     }
@@ -340,7 +398,13 @@ def call_scan_agent_data_outlook(args: dict[str, Any]) -> dict[str, Any]:
             source_type="Outlook",
             direction="Received",
             today_only=args.get("today_only", True),
-            timezone=args.get("timezone", core.DEFAULT_TIMEZONE),
+            timezone=timezone,
+            scan_from=scan_from,
+            scan_to=scan_to,
+            require_agent_tag=True,
+            source_scope=args.get("received_source_scope", "Inbox"),
+            executed_by_email=args.get("executed_by_email", ""),
+            run_id=args.get("run_id", ""),
         )
     if args.get("include_sent", True):
         result["sent"] = core.scan_messages(
@@ -348,21 +412,38 @@ def call_scan_agent_data_outlook(args: dict[str, Any]) -> dict[str, Any]:
             source_type="Outlook",
             direction="Sent",
             today_only=args.get("today_only", True),
-            timezone=args.get("timezone", core.DEFAULT_TIMEZONE),
+            timezone=timezone,
+            scan_from=scan_from,
+            scan_to=scan_to,
+            require_agent_tag=True,
+            source_scope=args.get("sent_source_scope", "Sent Items"),
+            executed_by_email=args.get("executed_by_email", ""),
+            run_id=args.get("run_id", ""),
         )
     return result
 
 
 def call_scan_zoom_ai_companion(args: dict[str, Any]) -> dict[str, Any]:
+    timezone = args.get("timezone", core.DEFAULT_TIMEZONE)
+    scan_from = args.get("scan_from")
+    scan_to = args.get("scan_to")
+    source_scope = args.get("source_scope", core.DEFAULT_ZOOM_FOLDER)
     result = core.scan_messages(
         args.get("messages", []),
         source_type="Zoom",
         direction="MeetingTranscript",
         today_only=args.get("today_only", True),
-        timezone=args.get("timezone", core.DEFAULT_TIMEZONE),
+        timezone=timezone,
+        scan_from=scan_from,
+        scan_to=scan_to,
+        require_agent_tag=bool(args.get("require_agent_tag", False)),
+        source_scope=source_scope,
+        expected_source_scope=core.DEFAULT_ZOOM_FOLDER,
+        executed_by_email=args.get("executed_by_email", ""),
+        run_id=args.get("run_id", ""),
     )
     result["folder_name"] = core.DEFAULT_ZOOM_FOLDER
-    result["outlook_scan_plan"] = core.outlook_scan_plan(args.get("timezone", core.DEFAULT_TIMEZONE))
+    result["outlook_scan_plan"] = core.outlook_scan_plan(timezone, scan_from, scan_to)
     return result
 
 
@@ -400,6 +481,14 @@ def call_validate_pulse_connection(args: dict[str, Any]) -> dict[str, Any]:
 
 def call_prepare_daily_sync_automation(args: dict[str, Any]) -> dict[str, Any]:
     return core.prepare_daily_sync_automation(args)
+
+
+def call_prepare_incremental_sync_window(args: dict[str, Any]) -> dict[str, Any]:
+    return core.prepare_incremental_sync_window(args)
+
+
+def call_record_automation_run(args: dict[str, Any]) -> dict[str, Any]:
+    return core.record_automation_run(args)
 
 
 def call_refresh_knowledge_index(args: dict[str, Any]) -> dict[str, Any]:
@@ -474,6 +563,8 @@ CALLS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "configure_pulse_connection": call_configure_pulse_connection,
     "validate_pulse_connection": call_validate_pulse_connection,
     "prepare_daily_sync_automation": call_prepare_daily_sync_automation,
+    "prepare_incremental_sync_window": call_prepare_incremental_sync_window,
+    "record_automation_run": call_record_automation_run,
     "refresh_knowledge_index": call_refresh_knowledge_index,
     "query_knowledge_wiki": call_query_knowledge_wiki,
     "get_opportunity_timeline": call_get_opportunity_timeline,
@@ -512,7 +603,7 @@ def handle(request: dict[str, Any]) -> None:
             {
                 "protocolVersion": request.get("params", {}).get("protocolVersion", "2024-11-05"),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "oracle-opportunity-pulse", "version": "1.0.1"},
+                "serverInfo": {"name": "oracle-opportunity-pulse", "version": "1.0.2"},
             },
         )
         return

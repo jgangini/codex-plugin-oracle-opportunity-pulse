@@ -17,5 +17,6 @@ description: Register Slack channel links for Oracle Opportunity Pulse. Use when
 
 - V1 registers Slack links only.
 - Do not claim Slack messages were read unless a Slack API connector/token is explicitly available.
+- If future Slack message ingestion is enabled, use `Automation Runs` watermarks per user/channel and deduplicate by Slack timestamp.
 - Use Slack metadata to help classify future Outlook/Zoom evidence.
 - If the wiki index is not refreshed after registration, warn that query results may be stale.

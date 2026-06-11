@@ -272,6 +272,181 @@ class KnowledgeWikiTests(unittest.TestCase):
         self.assertNotIn("rrule", result)
         self.assertIn("RRULE", result["codex_automation"]["fields"]["rrule"])
         self.assertIn("never autoapprove", result["prompt"].lower())
+        self.assertIn("since last successful run", result["prompt"])
+
+    def test_outlook_agent_tag_required_inside_incremental_window(self) -> None:
+        messages = [
+            {
+                "id": "outlook-1",
+                "internetMessageId": "<outlook-1@example.com>",
+                "subject": "ACME discovery",
+                "receivedDateTime": "2026-06-11T15:00:00-05:00",
+                "body": "Please capture this @agent_data for ACME.",
+            },
+            {
+                "id": "outlook-2",
+                "internetMessageId": "<outlook-2@example.com>",
+                "subject": "ACME FYI",
+                "receivedDateTime": "2026-06-11T15:05:00-05:00",
+                "body": "No marker here.",
+            },
+        ]
+        result = core.scan_messages(
+            messages,
+            source_type="Outlook",
+            direction="Received",
+            today_only=False,
+            scan_from="2026-06-11T14:00:00-05:00",
+            scan_to="2026-06-11T16:00:00-05:00",
+            require_agent_tag=True,
+        )
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["skipped"]["missing_agent_tag"], 1)
+        self.assertEqual(result["candidates"][0]["source_external_id"], "<outlook-1@example.com>")
+
+    def test_zoom_does_not_require_agent_tag_but_requires_folder_scope(self) -> None:
+        message = {
+            "id": "zoom-1",
+            "internetMessageId": "<zoom-1@example.com>",
+            "subject": "Zoom transcript: ACME",
+            "receivedDateTime": "2026-06-11T17:00:00-05:00",
+            "body": "Zoom transcript without ingestion marker.",
+        }
+        result = core.scan_messages(
+            [message],
+            source_type="Zoom",
+            direction="MeetingTranscript",
+            today_only=False,
+            scan_from="2026-06-11T16:00:00-05:00",
+            scan_to="2026-06-11T18:00:00-05:00",
+            require_agent_tag=False,
+            source_scope=core.DEFAULT_ZOOM_FOLDER,
+            expected_source_scope=core.DEFAULT_ZOOM_FOLDER,
+        )
+        self.assertEqual(result["count"], 1)
+        self.assertFalse(result["filters"]["require_agent_tag"])
+
+        outside = core.scan_messages(
+            [{**message, "id": "zoom-2", "internetMessageId": "<zoom-2@example.com>"}],
+            source_type="Zoom",
+            direction="MeetingTranscript",
+            today_only=False,
+            scan_from="2026-06-11T16:00:00-05:00",
+            scan_to="2026-06-11T18:00:00-05:00",
+            require_agent_tag=False,
+            source_scope="Inbox",
+            expected_source_scope=core.DEFAULT_ZOOM_FOLDER,
+        )
+        self.assertEqual(outside["count"], 0)
+        self.assertEqual(outside["skipped"]["wrong_source_scope"], 1)
+
+    def test_prepare_incremental_sync_window_uses_local_day_without_history(self) -> None:
+        result = core.prepare_incremental_sync_window(
+            {
+                "user_email": "user@example.com",
+                "source_type": "Outlook",
+                "direction": "Received",
+                "timezone": "America/Lima",
+                "now": "2026-06-11T18:00:00-05:00",
+            }
+        )
+        self.assertEqual(result["window_source"], "local_day_start")
+        self.assertEqual(result["scan_from"], "2026-06-11T00:00:00-05:00")
+        self.assertEqual(result["scan_to"], "2026-06-11T18:00:00-05:00")
+
+    def test_prepare_incremental_sync_window_uses_last_success_and_ignores_failed_runs(self) -> None:
+        core.record_automation_run(
+            {
+                "run_id": "run-success",
+                "user_email": "user@example.com",
+                "profile_name": "Oracle Opportunity Pulse",
+                "source_type": "Outlook",
+                "direction": "Received",
+                "scan_from": "2026-06-10T00:00:00-05:00",
+                "scan_to": "2026-06-10T18:00:00-05:00",
+                "started_at": "2026-06-10T18:00:00-05:00",
+                "finished_at": "2026-06-10T18:02:00-05:00",
+                "run_status": "Succeeded",
+                "last_source_event_at": "2026-06-10T17:30:00-05:00",
+                "next_scan_from": "2026-06-10T17:20:00-05:00",
+            }
+        )
+        core.record_automation_run(
+            {
+                "run_id": "run-failed",
+                "user_email": "user@example.com",
+                "profile_name": "Oracle Opportunity Pulse",
+                "source_type": "Outlook",
+                "direction": "Received",
+                "scan_from": "2026-06-11T08:00:00-05:00",
+                "scan_to": "2026-06-11T09:00:00-05:00",
+                "run_status": "Failed",
+                "error_summary": "PC offline during previous schedule.",
+            }
+        )
+        result = core.prepare_incremental_sync_window(
+            {
+                "user_email": "user@example.com",
+                "profile_name": "Oracle Opportunity Pulse",
+                "source_type": "Outlook",
+                "direction": "Received",
+                "timezone": "America/Lima",
+                "now": "2026-06-11T18:00:00-05:00",
+            }
+        )
+        self.assertTrue(result["used_last_successful_run"])
+        self.assertEqual(result["scan_from"], "2026-06-10T17:20:00-05:00")
+
+    def test_record_automation_run_sets_watermark_and_list_plan_includes_automation_runs(self) -> None:
+        result = core.record_automation_run(
+            {
+                "run_id": "run-zoom",
+                "user_email": "user@example.com",
+                "profile_name": "Oracle Opportunity Pulse",
+                "source_type": "Zoom",
+                "direction": "MeetingTranscript",
+                "source_scope": core.DEFAULT_ZOOM_FOLDER,
+                "scan_from": "2026-06-11T00:00:00-05:00",
+                "scan_to": "2026-06-11T18:00:00-05:00",
+                "run_status": "Succeeded",
+                "last_source_event_at": "2026-06-11T17:00:00-05:00",
+                "timezone": "America/Lima",
+            }
+        )
+        self.assertEqual(result["list_name"], core.DEFAULT_AUTOMATION_RUNS_LIST)
+        self.assertEqual(result["automation_run"]["next_scan_from"], "2026-06-11T16:50:00-05:00")
+        list_names = [item["displayName"] for item in core.list_creation_plan()["lists"]]
+        self.assertIn(core.DEFAULT_AUTOMATION_RUNS_LIST, list_names)
+
+    def test_overlap_deduplicates_by_source_external_id(self) -> None:
+        message = {
+            "id": "outlook-overlap",
+            "internetMessageId": "<overlap@example.com>",
+            "subject": "Overlap capture",
+            "receivedDateTime": "2026-06-11T17:55:00-05:00",
+            "body": "Overlap scan @agent_data.",
+        }
+        first = core.scan_messages(
+            [message],
+            source_type="Outlook",
+            direction="Received",
+            today_only=False,
+            scan_from="2026-06-11T17:00:00-05:00",
+            scan_to="2026-06-11T18:00:00-05:00",
+            require_agent_tag=True,
+        )
+        second = core.scan_messages(
+            [message],
+            source_type="Outlook",
+            direction="Received",
+            today_only=False,
+            scan_from="2026-06-11T17:50:00-05:00",
+            scan_to="2026-06-11T18:10:00-05:00",
+            require_agent_tag=True,
+        )
+        self.assertEqual(first["count"], 1)
+        self.assertEqual(second["count"], 0)
+        self.assertEqual(second["skipped"]["duplicates"], 1)
 
 
 if __name__ == "__main__":

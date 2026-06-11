@@ -1,6 +1,6 @@
 ---
 name: pulse-00-orchestrator
-description: Manage Oracle Opportunity Pulse workflows for normalized SharePoint lists and Markdown evidence capture. Use when registering Oracle opportunities, Slack channel links, Outlook emails tagged with @agent_data, Zoom AI Companion transcripts, manual notes, managing the Opportunities or Knowledge Items lists, or querying opportunity evidence by customer, country, opportunity code, SR, source type, or Markdown file links.
+description: Manage Oracle Opportunity Pulse workflows for normalized SharePoint lists and Markdown evidence capture. Use when registering Oracle opportunities, Slack channel links, Outlook emails tagged with @agent_data, Zoom AI Companion transcripts, manual notes, managing the Opportunities, Knowledge Items, or Automation Runs lists, or querying opportunity evidence by customer, country, opportunity code, SR, source type, or Markdown file links.
 ---
 
 # Oracle Opportunity Pulse
@@ -11,10 +11,11 @@ Use this skill as the main orchestrator for Oracle Opportunity Pulse. It coordin
 
 ## Model
 
-Use two SharePoint lists:
+Use three SharePoint lists:
 
 - `Opportunities`: the master opportunity context used for classification.
 - `Knowledge Items`: normalized evidence rows with `SourceType = Zoom | Outlook | Slack | Notes`.
+- `Automation Runs`: per-user/source/direction audit rows and incremental sync watermarks.
 
 Store Markdown evidence below `OracleOpportunityPulseWiki/{ClientName}/{OpportunityKey}/`, with source folders for `zoom`, `outlook/received`, `outlook/sent`, `slack`, and `notes`.
 
@@ -41,14 +42,16 @@ Read `references/sharepoint-model.md` before creating list payloads or explainin
 5. Create or validate root/opportunity folders with `create_base_sharepoint_folders`.
 6. Prepare a personal daily automation with `prepare_daily_sync_automation` and use Codex `automation_update` only after user confirmation.
 7. Register Slack by URL with `register_slack_channel`. Slack V1 stores the channel link only; do not read Slack messages unless a Slack API connector/token is explicitly available.
-8. Scan Outlook candidates with `scan_agent_data_outlook` for messages from the current day whose body contains `@agent_data`.
-9. Scan Zoom transcripts with `scan_zoom_ai_companion` for messages in the exact configured Outlook folder, default `[0] Zoom AI companion`.
-10. Use `propose_candidate` to show client, opportunity, SR, confidence, and evidence.
-11. Wait for explicit user approval or correction.
-12. Use `approve_candidate` only after approval. It writes local state and prepares Markdown/wiki paths or Graph payloads.
-13. Use `query_opportunity_pulse` or `query_knowledge_wiki` for conversational lookup over opportunities, Knowledge Items, and fetched Markdown snapshots.
-14. Use `refresh_knowledge_index` after list or Markdown snapshots change, then upload the generated `_index` files with the SharePoint connector.
-15. Use `get_opportunity_timeline`, `get_backlinks`, and `suggest_wiki_links` for wiki navigation workflows.
+8. Use `prepare_incremental_sync_window` for each user/source/direction; first run starts at local day start, later runs resume from `Automation Runs.NextScanFrom`.
+9. Scan Outlook candidates with `scan_agent_data_outlook` for messages inside the sync window whose body contains `@agent_data`.
+10. Scan Zoom transcripts with `scan_zoom_ai_companion` for every message inside the sync window in the exact configured Outlook folder, default `[0] Zoom AI companion`; do not require `@agent_data`.
+11. Use `propose_candidate` to show client, opportunity, SR, confidence, and evidence.
+12. Wait for explicit user approval or correction.
+13. Use `approve_candidate` only after approval. It writes local state and prepares Markdown/wiki paths or Graph payloads.
+14. Use `record_automation_run` after each source scan to audit counts and compute the next watermark.
+15. Use `query_opportunity_pulse` or `query_knowledge_wiki` for conversational lookup over opportunities, Knowledge Items, and fetched Markdown snapshots.
+16. Use `refresh_knowledge_index` after list or Markdown snapshots change, then upload the generated `_index` files with the SharePoint connector.
+17. Use `get_opportunity_timeline`, `get_backlinks`, and `suggest_wiki_links` for wiki navigation workflows.
 
 ## Handoff Rule
 
@@ -56,8 +59,9 @@ After any approved Outlook, Zoom, Slack, or Notes evidence is stored in SharePoi
 
 ## Guardrails
 
-- Process only current-day email for automation unless the user explicitly asks for a different date range.
-- Treat `@agent_data` in the email body as the ingestion signal.
+- Use incremental scan windows by default; first run starts at local day start, later runs use the last successful `Automation Runs` watermark with a 10 minute overlap.
+- Treat `@agent_data` in the email body as the Outlook ingestion signal only.
+- Treat the exact Zoom folder `[0] Zoom AI companion` as the Zoom ingestion signal; do not require `@agent_data` for Zoom.
 - Always propose; never autoapprove.
 - Preserve Markdown content without frontmatter or summaries. Put metadata in SharePoint list fields or sidecar JSON.
 - Query only approved Knowledge Items by default, and exclude `_pending` unless the user asks for pending content.

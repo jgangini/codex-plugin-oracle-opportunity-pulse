@@ -10,7 +10,7 @@ dependencies:
       description: "Local MCP tools for opportunity registration, candidate proposal, wiki paths, indexing, and query"
     - type: "mcp"
       value: "microsoft_outlook_email"
-      description: "Outlook connector for daily @agent_data and Zoom AI Companion messages"
+      description: "Outlook connector for incremental @agent_data mail and Zoom AI Companion folder messages"
     - type: "mcp"
       value: "microsoft_sharepoint"
       description: "SharePoint connector for Markdown wiki files and document lookup"

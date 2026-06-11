@@ -1,7 +1,7 @@
 {
   "name": "oracle-opportunity-pulse",
-  "version": "1.0.1",
-  "description": "Manage guided Oracle opportunity Pulse setup, normalized SharePoint lists, Markdown evidence, personal automation, and a SharePoint-backed Knowledge Wiki.",
+  "version": "1.0.2",
+  "description": "Manage guided Oracle opportunity Pulse setup, normalized SharePoint lists, Markdown evidence, incremental personal automation, Automation Runs watermarks, and a SharePoint-backed Knowledge Wiki.",
   "author": {
     "name": "Joel Ganggini"
   },
@@ -21,7 +21,7 @@
   "interface": {
     "displayName": "Oracle Opportunity Pulse",
     "shortDescription": "Manage Oracle opportunity lists and wiki evidence.",
-    "longDescription": "Manages guided installation or connection to a shared SharePoint Pulse, normalized Oracle opportunity and knowledge item lists, Markdown evidence from Slack channel links, tagged Outlook messages, Zoom AI Companion transcripts, manual notes, personal daily automation preparation, and a SharePoint-backed Knowledge Wiki index.",
+    "longDescription": "Manages guided installation or connection to a shared SharePoint Pulse, normalized Oracle opportunity, knowledge item, and automation run lists, Markdown evidence from Slack channel links, tagged Outlook messages, Zoom AI Companion transcripts, manual notes, personal daily automation preparation with incremental watermarks, and a SharePoint-backed Knowledge Wiki index.",
     "developerName": "Joel Ganggini",
     "category": "Oracle",
     "capabilities": [

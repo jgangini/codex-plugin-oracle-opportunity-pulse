@@ -22,11 +22,14 @@ DEFAULT_CONFIG_FOLDER = "_config"
 DEFAULT_INDEX_FOLDER = "_index"
 DEFAULT_TEMPLATE_FOLDER = "_templates"
 DEFAULT_ATTACHMENTS_FOLDER = "attachments"
+DEFAULT_AUTOMATION_RUNS_LIST = "Automation Runs"
+DEFAULT_SYNC_OVERLAP_MINUTES = 10
 PULSE_PROFILE_FILE_NAME = "pulse-profile.json"
 DELIVERY_MODELS = {"Oracle Services", "P2P", "Partner", "Customer"}
 SOURCE_TYPES = {"Zoom", "Outlook", "Slack", "Notes"}
 DIRECTIONS = {"Received", "Sent", "MeetingTranscript", "Manual"}
 LIFECYCLE_STAGES = {"Discovery", "Qualified", "OpportunityCreated", "Active", "Closed", "OnHold"}
+RUN_STATUSES = {"Started", "Succeeded", "Failed", "Skipped"}
 INDEX_FILE_NAMES = {
     "opportunities": "opportunities.jsonl",
     "knowledge_items": "knowledge-items.jsonl",
@@ -66,6 +69,7 @@ def load_state(path: str | Path | None = None) -> dict[str, Any]:
             "knowledge_items": [],
             "candidates": [],
             "rejected_candidates": [],
+            "automation_runs": [],
         }
     return json.loads(state_path.read_text(encoding="utf-8"))
 
@@ -254,6 +258,28 @@ def knowledge_fields(item: dict[str, Any]) -> dict[str, Any]:
         "ApprovalStatus": item.get("approval_status", "Approved"),
         "ClassificationEvidence": item.get("classification_evidence", ""),
         "Notes": item.get("notes", ""),
+    }
+
+
+def automation_run_fields(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "RunId": run.get("run_id", ""),
+        "UserEmail": run.get("user_email", ""),
+        "ProfileName": run.get("profile_name", ""),
+        "SourceType": run.get("source_type", ""),
+        "Direction": run.get("direction", ""),
+        "SourceScope": run.get("source_scope", ""),
+        "ScanFrom": run.get("scan_from", ""),
+        "ScanTo": run.get("scan_to", ""),
+        "StartedAt": run.get("started_at", ""),
+        "FinishedAt": run.get("finished_at", ""),
+        "RunStatus": run.get("run_status", ""),
+        "CandidateCount": int(run.get("candidate_count", 0) or 0),
+        "ApprovedCount": int(run.get("approved_count", 0) or 0),
+        "RejectedCount": int(run.get("rejected_count", 0) or 0),
+        "LastSourceEventAt": run.get("last_source_event_at", ""),
+        "NextScanFrom": run.get("next_scan_from", ""),
+        "ErrorSummary": run.get("error_summary", ""),
     }
 
 
@@ -518,25 +544,92 @@ def is_current_day(value: str | None, timezone: str = DEFAULT_TIMEZONE) -> bool:
     ).date()
 
 
+def ensure_timezone(value: dt.datetime, timezone: str = DEFAULT_TIMEZONE) -> dt.datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=ZoneInfo(timezone))
+    return value
+
+
+def iso_with_seconds(value: dt.datetime) -> str:
+    return value.isoformat(timespec="seconds")
+
+
+def parse_window_datetime(value: str | None, timezone: str = DEFAULT_TIMEZONE) -> dt.datetime | None:
+    parsed = parse_datetime(value)
+    if parsed is None:
+        return None
+    return ensure_timezone(parsed, timezone)
+
+
+def message_event_time(message: dict[str, Any], direction: str, timezone: str = DEFAULT_TIMEZONE) -> tuple[str, dt.datetime | None]:
+    if direction == "Sent":
+        value = message.get("sentDateTime") or message.get("receivedDateTime") or message.get("createdDateTime")
+    else:
+        value = message.get("receivedDateTime") or message.get("sentDateTime") or message.get("createdDateTime")
+    parsed = parse_window_datetime(value, timezone)
+    return str(value or ""), parsed
+
+
+def in_sync_window(
+    value: str | None,
+    scan_from: str | None = None,
+    scan_to: str | None = None,
+    timezone: str = DEFAULT_TIMEZONE,
+) -> bool:
+    event_time = parse_window_datetime(value, timezone)
+    if event_time is None:
+        return True
+    start = parse_window_datetime(scan_from, timezone)
+    end = parse_window_datetime(scan_to, timezone)
+    event_utc = event_time.astimezone(dt.timezone.utc)
+    if start and event_utc < start.astimezone(dt.timezone.utc):
+        return False
+    if end and event_utc >= end.astimezone(dt.timezone.utc):
+        return False
+    return True
+
+
+def source_external_id_for(message: dict[str, Any]) -> str:
+    for key in (
+        "internetMessageId",
+        "internet_message_id",
+        "internetMessageID",
+        "messageId",
+        "message_id",
+        "id",
+        "ts",
+        "timestamp",
+    ):
+        value = message.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
 def build_candidate(
     message: dict[str, Any],
     source_type: str,
     direction: str,
     timezone: str = DEFAULT_TIMEZONE,
+    require_agent_tag: bool = True,
+    source_scope: str = "",
+    scan_from: str = "",
+    scan_to: str = "",
+    run_id: str = "",
+    executed_by_email: str = "",
 ) -> dict[str, Any] | None:
     body = extract_email_body(message)
-    if not contains_agent_tag(body):
+    if require_agent_tag and not contains_agent_tag(body):
         return None
     title = message.get("subject") or message.get("title") or "Untitled message"
-    captured_at = (
-        message.get("receivedDateTime")
-        or message.get("sentDateTime")
-        or message.get("createdDateTime")
-        or now_iso(timezone)
-    )
+    captured_at, parsed_event_time = message_event_time(message, direction, timezone)
+    captured_at = captured_at or now_iso(timezone)
+    source_external_id = source_external_id_for(message)
+    if not source_external_id:
+        source_external_id = make_id("src", "|".join([title, captured_at, source_type, direction]))
     seed = "|".join(
         [
-            str(message.get("id") or message.get("internetMessageId") or ""),
+            source_external_id,
             source_type,
             direction,
             title,
@@ -550,8 +643,14 @@ def build_candidate(
         "direction": direction,
         "title": title,
         "source_url": message.get("webLink") or message.get("link") or "",
-        "source_external_id": message.get("id") or message.get("internetMessageId") or "",
+        "source_external_id": source_external_id,
         "captured_at": captured_at,
+        "source_event_at": iso_with_seconds(parsed_event_time) if parsed_event_time else captured_at,
+        "source_scope": source_scope,
+        "scan_from": scan_from,
+        "scan_to": scan_to,
+        "run_id": run_id,
+        "executed_by_email": executed_by_email,
         "sender": message.get("from") or message.get("sender") or "",
         "to": message.get("toRecipients") or message.get("to") or "",
         "sr_number": extract_sr_number(text),
@@ -567,25 +666,107 @@ def scan_messages(
     today_only: bool = True,
     timezone: str = DEFAULT_TIMEZONE,
     state: dict[str, Any] | None = None,
+    scan_from: str | None = None,
+    scan_to: str | None = None,
+    require_agent_tag: bool = True,
+    source_scope: str = "",
+    expected_source_scope: str = "",
+    executed_by_email: str = "",
+    run_id: str = "",
 ) -> dict[str, Any]:
     state = state or load_state()
     candidates = []
+    skipped_out_of_window = 0
+    skipped_missing_marker = 0
+    skipped_wrong_scope = 0
+    duplicates_skipped = 0
     for message in messages:
-        date_value = (
-            message.get("receivedDateTime")
-            if direction == "Received"
-            else message.get("sentDateTime") or message.get("receivedDateTime")
-        )
-        if today_only and not is_current_day(date_value, timezone):
+        actual_scope = str(message.get("source_scope") or message.get("folder") or message.get("parentFolder") or source_scope)
+        if expected_source_scope and actual_scope != expected_source_scope:
+            skipped_wrong_scope += 1
             continue
-        candidate = build_candidate(message, source_type, direction, timezone)
+        date_value, _parsed_date = message_event_time(message, direction, timezone)
+        if scan_from or scan_to:
+            if not in_sync_window(date_value, scan_from, scan_to, timezone):
+                skipped_out_of_window += 1
+                continue
+        elif today_only and not is_current_day(date_value, timezone):
+            skipped_out_of_window += 1
+            continue
+        if require_agent_tag and not contains_agent_tag(extract_email_body(message)):
+            skipped_missing_marker += 1
+            continue
+        candidate = build_candidate(
+            message,
+            source_type,
+            direction,
+            timezone,
+            require_agent_tag=require_agent_tag,
+            source_scope=actual_scope,
+            scan_from=scan_from or "",
+            scan_to=scan_to or "",
+            run_id=run_id,
+            executed_by_email=executed_by_email,
+        )
         if candidate is None:
+            continue
+        if duplicate_candidate_exists(state, candidate):
+            duplicates_skipped += 1
             continue
         candidate["proposal"] = classify_candidate(state, candidate)
         upsert_candidate(state, candidate)
         candidates.append(candidate)
     save_state(state)
-    return {"count": len(candidates), "candidates": candidates}
+    return {
+        "count": len(candidates),
+        "candidates": candidates,
+        "scan_window": {
+            "scan_from": scan_from or "",
+            "scan_to": scan_to or "",
+            "timezone": timezone,
+            "today_only": bool(today_only and not (scan_from or scan_to)),
+        },
+        "filters": {
+            "source_type": source_type,
+            "direction": direction,
+            "source_scope": source_scope,
+            "expected_source_scope": expected_source_scope,
+            "require_agent_tag": require_agent_tag,
+        },
+        "skipped": {
+            "out_of_window": skipped_out_of_window,
+            "missing_agent_tag": skipped_missing_marker,
+            "wrong_source_scope": skipped_wrong_scope,
+            "duplicates": duplicates_skipped,
+        },
+        "run_id": run_id,
+        "executed_by_email": executed_by_email,
+    }
+
+
+def duplicate_candidate_exists(state: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    source_external_id = candidate.get("source_external_id")
+    if not source_external_id:
+        return False
+    source_type = candidate.get("source_type")
+    direction = candidate.get("direction")
+    for existing in state.get("candidates", []):
+        if existing.get("id") == candidate.get("id"):
+            return True
+        if (
+            existing.get("source_external_id") == source_external_id
+            and existing.get("source_type") == source_type
+            and existing.get("direction") == direction
+        ):
+            return True
+    for item in state.get("knowledge_items", []):
+        if (
+            item.get("source_external_id") == source_external_id
+            and item.get("source_type") == source_type
+            and item.get("direction") == direction
+        ):
+            return True
+    return False
 
 
 def upsert_candidate(state: dict[str, Any], candidate: dict[str, Any]) -> None:
@@ -959,6 +1140,191 @@ def normalize_knowledge_item(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_automation_run_record(record: dict[str, Any]) -> dict[str, Any]:
+    source = record_fields(record)
+    run_status = str(get_first(source, "run_status", "RunStatus", default="Succeeded")).strip() or "Succeeded"
+    if run_status not in RUN_STATUSES:
+        normalized_status = run_status.lower()
+        if normalized_status in {"success", "successful", "completed", "complete"}:
+            run_status = "Succeeded"
+        elif normalized_status in {"error", "failed", "failure"}:
+            run_status = "Failed"
+    source_type = str(get_first(source, "source_type", "SourceType")).strip()
+    direction = str(get_first(source, "direction", "Direction")).strip()
+    user_email = str(get_first(source, "user_email", "UserEmail", "executed_by_email", "ExecutedByEmail")).strip()
+    profile_name = str(get_first(source, "profile_name", "ProfileName", default="Oracle Opportunity Pulse")).strip()
+    scan_from = str(get_first(source, "scan_from", "ScanFrom")).strip()
+    scan_to = str(get_first(source, "scan_to", "ScanTo")).strip()
+    started_at = str(get_first(source, "started_at", "StartedAt", default=now_iso())).strip()
+    run_id = str(
+        get_first(
+            source,
+            "run_id",
+            "RunId",
+            default=make_id("run", "|".join([user_email, profile_name, source_type, direction, started_at])),
+        )
+    ).strip()
+    return {
+        "id": str(get_first(source, "id", "Id", default=run_id)),
+        "run_id": run_id,
+        "user_email": user_email,
+        "profile_name": profile_name,
+        "source_type": source_type,
+        "direction": direction,
+        "source_scope": str(get_first(source, "source_scope", "SourceScope")).strip(),
+        "scan_from": scan_from,
+        "scan_to": scan_to,
+        "started_at": started_at,
+        "finished_at": str(get_first(source, "finished_at", "FinishedAt")).strip(),
+        "run_status": run_status,
+        "candidate_count": int(get_first(source, "candidate_count", "CandidateCount", default=0) or 0),
+        "approved_count": int(get_first(source, "approved_count", "ApprovedCount", default=0) or 0),
+        "rejected_count": int(get_first(source, "rejected_count", "RejectedCount", default=0) or 0),
+        "last_source_event_at": str(get_first(source, "last_source_event_at", "LastSourceEventAt")).strip(),
+        "next_scan_from": str(get_first(source, "next_scan_from", "NextScanFrom")).strip(),
+        "error_summary": str(get_first(source, "error_summary", "ErrorSummary")).strip(),
+    }
+
+
+def upsert_automation_run(state: dict[str, Any], run: dict[str, Any]) -> None:
+    runs = state.setdefault("automation_runs", [])
+    for index, existing in enumerate(runs):
+        if existing.get("run_id") == run.get("run_id"):
+            runs[index] = run
+            return
+    runs.append(run)
+
+
+def last_successful_automation_run(
+    state: dict[str, Any],
+    user_email: str,
+    source_type: str,
+    direction: str,
+    profile_name: str = "",
+    source_scope: str = "",
+) -> dict[str, Any] | None:
+    candidates = []
+    normalized_user = normalize_text(user_email)
+    if not normalized_user:
+        return None
+    normalized_profile = normalize_text(profile_name)
+    normalized_scope = normalize_text(source_scope)
+    for record in state.get("automation_runs", []):
+        run = normalize_automation_run_record(record)
+        if run.get("run_status") != "Succeeded":
+            continue
+        if normalized_user and normalize_text(run.get("user_email")) != normalized_user:
+            continue
+        if source_type and run.get("source_type") != source_type:
+            continue
+        if direction and run.get("direction") != direction:
+            continue
+        if normalized_profile and normalize_text(run.get("profile_name")) != normalized_profile:
+            continue
+        if normalized_scope and normalize_text(run.get("source_scope")) != normalized_scope:
+            continue
+        candidates.append(run)
+    candidates.sort(key=lambda item: date_sort_value(item.get("finished_at") or item.get("started_at")), reverse=True)
+    return candidates[0] if candidates else None
+
+
+def next_scan_from_for_run(run: dict[str, Any], timezone: str = DEFAULT_TIMEZONE, overlap_minutes: int = DEFAULT_SYNC_OVERLAP_MINUTES) -> str:
+    if run.get("run_status") != "Succeeded":
+        return run.get("scan_from", "")
+    basis = run.get("last_source_event_at") or run.get("scan_to") or run.get("finished_at")
+    basis_dt = parse_window_datetime(basis, timezone)
+    if basis_dt is None:
+        return run.get("scan_from", "")
+    return iso_with_seconds(basis_dt - dt.timedelta(minutes=max(0, int(overlap_minutes))))
+
+
+def record_automation_run(payload: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = state or load_state()
+    timezone = str(payload.get("timezone") or DEFAULT_TIMEZONE)
+    run = normalize_automation_run_record(payload)
+    if not run.get("finished_at") and run.get("run_status") in {"Succeeded", "Failed", "Skipped"}:
+        run["finished_at"] = now_iso(timezone if valid_timezone(timezone) else DEFAULT_TIMEZONE)
+    if not run.get("next_scan_from"):
+        run["next_scan_from"] = next_scan_from_for_run(
+            run,
+            timezone if valid_timezone(timezone) else DEFAULT_TIMEZONE,
+            int(payload.get("overlap_minutes", DEFAULT_SYNC_OVERLAP_MINUTES) or DEFAULT_SYNC_OVERLAP_MINUTES),
+        )
+    upsert_automation_run(state, run)
+    save_state(state)
+    return {
+        "status": "recorded",
+        "automation_run": run,
+        "sharepoint_fields": automation_run_fields(run),
+        "list_name": DEFAULT_AUTOMATION_RUNS_LIST,
+    }
+
+
+def prepare_incremental_sync_window(payload: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
+    state = state or load_state()
+    timezone = str(payload.get("timezone") or DEFAULT_TIMEZONE).strip()
+    if not valid_timezone(timezone):
+        raise ValueError("timezone must be a valid IANA timezone.")
+    tz = ZoneInfo(timezone)
+    scan_to_dt = parse_window_datetime(payload.get("scan_to") or payload.get("now"), timezone)
+    if scan_to_dt is None:
+        scan_to_dt = dt.datetime.now(tz)
+    scan_to_local = scan_to_dt.astimezone(tz)
+    user_email = str(payload.get("user_email") or payload.get("executed_by_email") or "").strip()
+    source_type = str(payload.get("source_type") or "").strip()
+    direction = str(payload.get("direction") or "").strip()
+    source_scope = str(payload.get("source_scope") or "").strip()
+    profile_name = str(payload.get("profile_name") or "").strip()
+    warnings = []
+    if not user_email:
+        warnings.append("user_email was not supplied; no prior user watermark will be reused.")
+    last_run = last_successful_automation_run(
+        state,
+        user_email=user_email,
+        source_type=source_type,
+        direction=direction,
+        profile_name=profile_name,
+        source_scope=source_scope,
+    )
+    if payload.get("scan_from"):
+        scan_from = str(payload["scan_from"])
+        source = "explicit_scan_from"
+    elif last_run and last_run.get("next_scan_from"):
+        scan_from = last_run["next_scan_from"]
+        source = "last_successful_run"
+    elif last_run:
+        overlap = int(payload.get("overlap_minutes", DEFAULT_SYNC_OVERLAP_MINUTES) or DEFAULT_SYNC_OVERLAP_MINUTES)
+        basis = last_run.get("last_source_event_at") or last_run.get("finished_at") or last_run.get("scan_to")
+        basis_dt = parse_window_datetime(basis, timezone) or scan_to_local
+        scan_from = iso_with_seconds(basis_dt - dt.timedelta(minutes=max(0, overlap)))
+        source = "last_successful_run"
+    else:
+        scan_from = iso_with_seconds(scan_to_local.replace(hour=0, minute=0, second=0, microsecond=0))
+        source = "local_day_start"
+    scan_to = iso_with_seconds(scan_to_local)
+    return {
+        "status": "prepared",
+        "timezone": timezone,
+        "user_email": user_email,
+        "profile_name": profile_name,
+        "source_type": source_type,
+        "direction": direction,
+        "source_scope": source_scope,
+        "scan_from": scan_from,
+        "scan_to": scan_to,
+        "window_source": source,
+        "used_last_successful_run": source == "last_successful_run",
+        "last_successful_run": last_run or {},
+        "overlap_minutes": int(payload.get("overlap_minutes", DEFAULT_SYNC_OVERLAP_MINUTES) or DEFAULT_SYNC_OVERLAP_MINUTES),
+        "filter_summary": {
+            "outlook": "Apply @agent_data only to Outlook received/sent messages.",
+            "zoom": f"Read every message in the exact folder {DEFAULT_ZOOM_FOLDER}; no @agent_data marker required.",
+            "slack": "Slack V1 registers channel links only; future message reads should use the same watermark model.",
+        },
+        "warnings": warnings,
+    }
+
+
 def extract_tags(markdown_content: str | None) -> list[str]:
     if not markdown_content:
         return []
@@ -1050,6 +1416,7 @@ def wiki_config_from_state(state: dict[str, Any]) -> dict[str, Any]:
         "templates_folder": clean_path(configured.get("templates_folder", f"{root_folder}/{DEFAULT_TEMPLATE_FOLDER}")),
         "opportunities_list": configured.get("opportunities_list", "Opportunities"),
         "knowledge_items_list": configured.get("knowledge_items_list", "Knowledge Items"),
+        "automation_runs_list": configured.get("automation_runs_list", DEFAULT_AUTOMATION_RUNS_LIST),
     }
 
 
@@ -1064,6 +1431,7 @@ def pulse_connection_from_state(state: dict[str, Any]) -> dict[str, Any]:
             "root_folder": wiki["root_folder"],
             "opportunities_list": wiki["opportunities_list"],
             "knowledge_items_list": wiki["knowledge_items_list"],
+            "automation_runs_list": wiki["automation_runs_list"],
         }
     return normalize_pulse_profile(connection)
 
@@ -1084,6 +1452,7 @@ def normalize_pulse_profile(payload: dict[str, Any] | None = None) -> dict[str, 
         "templates_folder": clean_path(str(source.get("templates_folder") or f"{root_folder}/{DEFAULT_TEMPLATE_FOLDER}")),
         "opportunities_list": str(source.get("opportunities_list") or "Opportunities").strip(),
         "knowledge_items_list": str(source.get("knowledge_items_list") or "Knowledge Items").strip(),
+        "automation_runs_list": str(source.get("automation_runs_list") or DEFAULT_AUTOMATION_RUNS_LIST).strip(),
         "timezone": str(source.get("timezone") if "timezone" in source else DEFAULT_TIMEZONE).strip(),
         "zoom_folder": str(source.get("zoom_folder") if "zoom_folder" in source else DEFAULT_ZOOM_FOLDER).strip(),
         "source_defaults": {
@@ -1109,6 +1478,7 @@ def public_pulse_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "templates_folder",
         "opportunities_list",
         "knowledge_items_list",
+        "automation_runs_list",
         "timezone",
         "zoom_folder",
         "source_defaults",
@@ -1128,6 +1498,7 @@ def required_profile_fields(profile: dict[str, Any]) -> list[str]:
         "root_folder",
         "opportunities_list",
         "knowledge_items_list",
+        "automation_runs_list",
         "timezone",
         "zoom_folder",
     ]
@@ -1231,7 +1602,7 @@ def validate_pulse_connection(payload: dict[str, Any] | None = None, state: dict
     source_status = {
         "sharepoint": {
             "enabled": connector_enabled(connector_status, "sharepoint"),
-            "lists": [profile["opportunities_list"], profile["knowledge_items_list"]],
+            "lists": [profile["opportunities_list"], profile["knowledge_items_list"], profile["automation_runs_list"]],
             "wiki_root": profile["root_folder"],
             "required_paths": required_paths,
             "profile_file": pulse_profile_path(profile),
@@ -1241,14 +1612,18 @@ def validate_pulse_connection(payload: dict[str, Any] | None = None, state: dict
             "received": True,
             "sent": True,
             "body_marker": AGENT_TAG,
+            "sync_window": "incremental_since_last_successful_run",
         },
         "zoom": {
             "enabled": connector_enabled(connector_status, "outlook-email"),
             "folder": profile["zoom_folder"],
+            "body_marker_required": False,
+            "sync_window": "incremental_since_last_successful_run",
         },
         "slack": {
             "enabled": connector_enabled(connector_status, "slack"),
             "mode": "link_registration_v1",
+            "future_sync_window": "incremental_since_last_successful_run",
         },
     }
     return {
@@ -1276,6 +1651,7 @@ def configure_knowledge_wiki(payload: dict[str, Any], state: dict[str, Any] | No
         "templates_folder": clean_path(str(payload.get("templates_folder", f"{root_folder}/{DEFAULT_TEMPLATE_FOLDER}"))),
         "opportunities_list": str(payload.get("opportunities_list", existing["opportunities_list"]) or "Opportunities"),
         "knowledge_items_list": str(payload.get("knowledge_items_list", existing["knowledge_items_list"]) or "Knowledge Items"),
+        "automation_runs_list": str(payload.get("automation_runs_list", existing.get("automation_runs_list", DEFAULT_AUTOMATION_RUNS_LIST)) or DEFAULT_AUTOMATION_RUNS_LIST),
     }
     state["knowledge_wiki_config"] = config
     save_state(state)
@@ -1837,6 +2213,29 @@ def graph_provision_requests() -> dict[str, Any]:
                     {"name": "Notes", "text": {"allowMultipleLines": True}},
                 ],
             },
+            {
+                "displayName": DEFAULT_AUTOMATION_RUNS_LIST,
+                "description": "Per-user Oracle Opportunity Pulse source sync audit and watermarks.",
+                "columns": [
+                    {"name": "RunId", "text": {}},
+                    {"name": "UserEmail", "text": {}},
+                    {"name": "ProfileName", "text": {}},
+                    {"name": "SourceType", "choice": {"choices": sorted(SOURCE_TYPES)}},
+                    {"name": "Direction", "choice": {"choices": sorted(DIRECTIONS)}},
+                    {"name": "SourceScope", "text": {}},
+                    {"name": "ScanFrom", "dateTime": {}},
+                    {"name": "ScanTo", "dateTime": {}},
+                    {"name": "StartedAt", "dateTime": {}},
+                    {"name": "FinishedAt", "dateTime": {}},
+                    {"name": "RunStatus", "choice": {"choices": sorted(RUN_STATUSES)}},
+                    {"name": "CandidateCount", "number": {}},
+                    {"name": "ApprovedCount", "number": {}},
+                    {"name": "RejectedCount", "number": {}},
+                    {"name": "LastSourceEventAt", "dateTime": {}},
+                    {"name": "NextScanFrom", "dateTime": {}},
+                    {"name": "ErrorSummary", "text": {"allowMultipleLines": True}},
+                ],
+            },
         ],
         "root_folder": DEFAULT_ROOT_FOLDER,
         "required_permission": "Sites.ReadWrite.All",
@@ -2037,10 +2436,14 @@ def check_required_connectors(config_path: str | None = None) -> dict[str, Any]:
     }
 
 
-def outlook_scan_plan(timezone: str = DEFAULT_TIMEZONE) -> dict[str, Any]:
+def outlook_scan_plan(
+    timezone: str = DEFAULT_TIMEZONE,
+    scan_from: str | None = None,
+    scan_to: str | None = None,
+) -> dict[str, Any]:
     local_now = dt.datetime.now(ZoneInfo(timezone))
-    start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + dt.timedelta(days=1)
+    start = parse_window_datetime(scan_from, timezone) or local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = parse_window_datetime(scan_to, timezone) or local_now
     return {
         "timezone": timezone,
         "received_filter": (
@@ -2053,6 +2456,8 @@ def outlook_scan_plan(timezone: str = DEFAULT_TIMEZONE) -> dict[str, Any]:
         ),
         "body_marker": AGENT_TAG,
         "zoom_folder": DEFAULT_ZOOM_FOLDER,
+        "zoom_body_marker_required": False,
+        "window_strategy": "scan_since_last_successful_run_with_10_minute_overlap",
     }
 
 
@@ -2093,11 +2498,11 @@ def prepare_daily_sync_automation(payload: dict[str, Any], state: dict[str, Any]
     )
     sources = []
     if include_received:
-        sources.append("received Outlook messages")
+        sources.append("received Outlook messages tagged with @agent_data")
     if include_sent:
-        sources.append("sent Outlook messages")
+        sources.append("sent Outlook messages tagged with @agent_data")
     if include_zoom:
-        sources.append(f"Zoom AI Companion messages from {profile['zoom_folder']}")
+        sources.append(f"all Zoom AI Companion messages from {profile['zoom_folder']}")
     if include_slack:
         sources.append("registered Slack channel links")
     source_text = ", ".join(sources) if sources else "configured sources"
@@ -2105,11 +2510,15 @@ def prepare_daily_sync_automation(payload: dict[str, Any], state: dict[str, Any]
         "Use $pulse-02-automation for the personal daily Oracle Opportunity Pulse sync. "
         f"Validate the active Pulse profile for {profile['hostname']}{profile['site_path']} "
         f"with wiki root {profile['root_folder']} and lists {profile['opportunities_list']} / "
-        f"{profile['knowledge_items_list']}. Scan today's {source_text} in timezone {timezone}; "
-        f"only capture Outlook or Zoom messages whose body contains {AGENT_TAG}. Propose client, "
+        f"{profile['knowledge_items_list']} / {profile['automation_runs_list']}. Scan since last successful run "
+        f"for {source_text} in timezone {timezone}; apply {AGENT_TAG} only to Outlook received/sent mail, "
+        f"and scan Zoom from the exact folder {profile['zoom_folder']} without requiring {AGENT_TAG}. "
+        "Use the Automation Runs watermark per user/source/direction, with a 10 minute overlap and source id dedupe. "
+        "Propose client, "
         "OpportunityKey, DiscoveryId, opportunity code, SR, source type, direction, evidence, and confidence. "
         "Never autoapprove. Wait for explicit user approval or correction before writing Markdown, Knowledge Items, "
-        "or Opportunity updates to SharePoint, then refresh the Knowledge Wiki index."
+        "or Opportunities updates to SharePoint. Record Automation Runs audit rows after each source scan, then refresh "
+        "the Knowledge Wiki index after approved evidence writes."
     )
     rrule = f"RRULE:FREQ=DAILY;BYHOUR={hour};BYMINUTE={minute};BYSECOND=0"
     automation_name = payload.get("name") or f"Oracle Opportunity Pulse daily sync ({profile['profile_name']})"
@@ -2130,6 +2539,12 @@ def prepare_daily_sync_automation(payload: dict[str, Any], state: dict[str, Any]
         "validation": validation,
         "prompt": prompt,
         "outlook_scan_plan": outlook_scan_plan(timezone),
+        "incremental_sync": {
+            "strategy": "scan_since_last_successful_run",
+            "first_run": "start_of_local_day",
+            "overlap_minutes": DEFAULT_SYNC_OVERLAP_MINUTES,
+            "watermark_list": profile["automation_runs_list"],
+        },
         "codex_automation": {
             "tool": "automation_update",
             "fields": {

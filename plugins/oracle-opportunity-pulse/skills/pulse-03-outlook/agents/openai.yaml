@@ -1,7 +1,7 @@
 interface:
   display_name: "Opportunity Pulse Outlook"
   short_description: "Capture tagged Outlook evidence"
-  default_prompt: "Use $pulse-03-outlook to scan today's @agent_data Outlook messages."
+  default_prompt: "Use $pulse-03-outlook to scan incremental @agent_data Outlook messages."
 
 dependencies:
   tools:

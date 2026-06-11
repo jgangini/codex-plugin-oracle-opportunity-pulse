@@ -9,7 +9,7 @@ description: Create and validate a personal Oracle Opportunity Pulse daily Codex
 
 Use this skill after `pulse-01-setup` has configured or connected the current user to a shared Pulse. It creates a personal Codex automation for that user, usually at 18:00 in their local timezone.
 
-The automation never autoapproves content. It scans current-day sources, proposes classifications, and waits for explicit approval before any SharePoint writes.
+The automation never autoapproves content. It scans each source since the last successful run for that user/source/direction, proposes classifications, and waits for explicit approval before any final SharePoint evidence writes.
 
 ## Workflow
 
@@ -22,21 +22,25 @@ The automation never autoapproves content. It scans current-day sources, propose
    - `include_sent = true`
    - `include_zoom = true`
    - `include_slack = false` unless Slack readiness must be enforced for this user.
-4. Review blocking issues and remediation prompts with the user.
-5. After confirmation, call Codex `automation_update` with the returned `codex_automation.fields`.
+4. During each automation run, call `prepare_incremental_sync_window` per enabled source/direction.
+5. Scan candidates, propose classifications, and wait for approval before final Markdown, Knowledge Items, or Opportunity writes.
+6. Call `record_automation_run` per source/direction with candidate counts, status, and `LastSourceEventAt`; successful runs compute the next watermark with a 10 minute overlap.
+7. Review blocking issues and remediation prompts with the user.
+8. After confirmation, call Codex `automation_update` with the returned `codex_automation.fields`.
 
 ## Personal Automation Rule
 
 Each user creates their own automation. The shared Pulse lives in SharePoint, but each user scans their own Outlook received/sent messages and Zoom AI Companion folder at their own 18:00 local time.
 
+`Automation Runs` stores one row per user + source + direction + execution. If the PC is off or a run fails, the next successful run resumes from the last successful `NextScanFrom`, not from the missed calendar day. The 10 minute overlap protects against delayed indexing, and candidates are deduplicated by `internet_message_id` when available, with fallback to the source message id.
+
 Do not create a central/shared automation unless the user explicitly requests a gateway account and confirms the account, permissions, and ownership model.
 
 ## Source Rules
 
-- Outlook: scan received and sent messages from the current day only.
-- Ingestion marker: body must contain `@agent_data`.
-- Zoom: scan the exact configured Zoom folder, default `[0] Zoom AI companion`.
-- Slack V1: validate connector/link registration only; do not claim Slack message ingestion.
+- Outlook: scan received and sent messages in the incremental window; the body must contain `@agent_data`.
+- Zoom: scan every message in the exact configured Zoom folder, default `[0] Zoom AI companion`, in the incremental window; do not require `@agent_data`.
+- Slack V1: validate connector/link registration only; do not claim Slack message ingestion. Future Slack message ingestion should use the same `Automation Runs` watermark model.
 - Notes: manual only, not part of the scheduled scan.
 
 ## Guardrails

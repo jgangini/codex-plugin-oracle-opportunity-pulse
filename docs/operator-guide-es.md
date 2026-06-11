@@ -8,6 +8,7 @@ Construir una wiki Markdown gobernada por SharePoint para dar trazabilidad a opo
 
 - `Opportunities`: lista maestra con cliente, pais, oportunidad, SR, workload, delivery, lideres CE y contexto.
 - `Knowledge Items`: lista normalizada de evidencias con `SourceType = Zoom | Outlook | Slack | Notes`.
+- `Automation Runs`: auditoria por usuario/fuente/direccion y watermark `NextScanFrom` para sincronizacion incremental.
 - `OracleOpportunityPulseWiki/`: estructura Markdown en SharePoint para archivos `.md`, templates, pendientes e indices.
 - `_config/pulse-profile.json`: perfil compartido no secreto para que otros usuarios se conecten al mismo Pulse.
 - `_index/*.jsonl`: indice reconstruible para busqueda, tags, backlinks, timelines y frescura.
@@ -34,7 +35,8 @@ Construir una wiki Markdown gobernada por SharePoint para dar trazabilidad a opo
 - Permisos para crear o actualizar carpetas y archivos en SharePoint.
 - Para listas SharePoint, un flujo autorizado de Microsoft Graph cuando se pase de dry-run a escritura real.
 - Carpeta exacta de Outlook: `[0] Zoom AI companion`.
-- Convencion de captura: el cuerpo del correo debe incluir `@agent_data`.
+- Convencion Outlook: el cuerpo del correo recibido/enviado debe incluir `@agent_data`.
+- Convencion Zoom: las transcripciones se capturan desde la carpeta exacta `[0] Zoom AI companion`; no requieren `@agent_data`.
 
 ## Flujo Entre Skills
 
@@ -42,7 +44,7 @@ Construir una wiki Markdown gobernada por SharePoint para dar trazabilidad a opo
 
 - Modo `install_new`: crea o valida un Pulse nuevo.
 - Modo `connect_existing`: conecta al usuario a un Pulse ya instalado.
-- Listas `Opportunities` y `Knowledge Items`.
+- Listas `Opportunities`, `Knowledge Items` y `Automation Runs`.
 - Carpeta raiz `OracleOpportunityPulseWiki`.
 - Carpetas `_config`, `_index`, `_templates`, `_pending`.
 - Perfil compartido `_config/pulse-profile.json`.
@@ -54,6 +56,9 @@ Construir una wiki Markdown gobernada por SharePoint para dar trazabilidad a opo
 - Valida SharePoint, Outlook, Zoom, Slack, listas, wiki folder y timezone.
 - Usa 18:00 en la zona horaria IANA de cada usuario.
 - Cada usuario escanea su propio Outlook/Zoom contra el Pulse compartido.
+- Calcula ventanas incrementales desde la ultima ejecucion exitosa por usuario/fuente/direccion.
+- Si la PC estuvo apagada o una ejecucion fallo, retoma desde el ultimo `NextScanFrom` exitoso.
+- Usa overlap de 10 minutos y deduplicacion por `internet_message_id` o id de la fuente.
 - Nunca autoaprueba; solo propone candidatos.
 
 `pulse-07-wiki` usa esa base:
@@ -65,8 +70,8 @@ Construir una wiki Markdown gobernada por SharePoint para dar trazabilidad a opo
 
 Las skills de fuente solo capturan o registran:
 
-- `pulse-03-outlook`: correos Outlook del dia con `@agent_data`.
-- `pulse-04-zoom`: transcripciones desde `[0] Zoom AI companion`.
+- `pulse-03-outlook`: correos Outlook dentro de la ventana incremental con `@agent_data`.
+- `pulse-04-zoom`: transcripciones dentro de la ventana incremental desde `[0] Zoom AI companion`, sin requerir `@agent_data`.
 - `pulse-05-slack`: links/canales Slack.
 - `pulse-06-notes`: notas Markdown manuales.
 
@@ -104,7 +109,7 @@ Codex debe preguntar:
 - Site path.
 - Library path.
 - Root folder de la wiki.
-- Nombre de listas: `Opportunities` y `Knowledge Items`.
+- Nombre de listas: `Opportunities`, `Knowledge Items` y `Automation Runs`.
 - Timezone IANA del usuario, por ejemplo `America/Lima`.
 - Carpeta Zoom, por defecto `[0] Zoom AI companion`.
 
@@ -121,7 +126,7 @@ Use $pulse-01-setup to configure_pulse_connection in install_new mode for hostna
 Despues ejecuta:
 
 ```text
-Use $pulse-01-setup to create or validate the Opportunities and Knowledge Items lists in dry-run mode, then prepare the base wiki folders including _config, _index, _templates, and _pending.
+Use $pulse-01-setup to create or validate the Opportunities, Knowledge Items, and Automation Runs lists in dry-run mode, then prepare the base wiki folders including _config, _index, _templates, and _pending.
 ```
 
 No se debe afirmar que SharePoint cambio hasta que un flujo Graph o herramienta SharePoint confirme la escritura.
@@ -144,7 +149,7 @@ Usa este modo si otra persona ya creo las listas y la wiki.
 Prompt sugerido:
 
 ```text
-Use $pulse-01-setup to configure_pulse_connection in connect_existing mode using this shared profile or these SharePoint locations: hostname <tenant>.sharepoint.com, site path /sites/<site>, library path Shared Documents, root folder OracleOpportunityPulseWiki, lists Opportunities and Knowledge Items, timezone <timezone>.
+Use $pulse-01-setup to configure_pulse_connection in connect_existing mode using this shared profile or these SharePoint locations: hostname <tenant>.sharepoint.com, site path /sites/<site>, library path Shared Documents, root folder OracleOpportunityPulseWiki, lists Opportunities, Knowledge Items, and Automation Runs, timezone <timezone>.
 ```
 
 Si existe el archivo `_config/pulse-profile.json`, Codex puede usarlo como `shared_profile`. Este archivo no debe contener secretos, tokens ni datos privados de Outlook/Slack.
@@ -155,7 +160,7 @@ Si existe el archivo `_config/pulse-profile.json`, Codex puede usarlo como `shar
 - Site path.
 - Library path.
 - Root folder.
-- Nombre de listas: `Opportunities` y `Knowledge Items`.
+- Nombre de listas: `Opportunities`, `Knowledge Items` y `Automation Runs`.
 - Timezone.
 - Carpeta Zoom.
 - Conectores SharePoint, Outlook Email y Slack.
@@ -186,12 +191,14 @@ Codex debe:
 - Pedir confirmacion antes de llamar `automation_update`.
 - Crear una automation personal, no una central compartida.
 
-La automation escanea:
+La automation escanea usando ventana incremental:
 
-- Correos recibidos del dia.
-- Correos enviados del dia.
-- Carpeta Zoom configurada.
+- Correos recibidos desde la ultima ejecucion exitosa, solo si contienen `@agent_data`.
+- Correos enviados desde la ultima ejecucion exitosa, solo si contienen `@agent_data`.
+- Carpeta Zoom configurada desde la ultima ejecucion exitosa, sin requerir `@agent_data`.
 - Slack solo como validacion/link registration V1 si se habilita.
+
+Cada fuente/direccion debe registrar una fila en `Automation Runs` con `RunId`, usuario, fuente, direccion, `ScanFrom`, `ScanTo`, estado, conteos y `NextScanFrom`.
 
 ### 7. Registrar oportunidad Discovery
 
@@ -226,13 +233,14 @@ Slack V1 solo registra el link/canal. No se debe afirmar que se leyeron mensajes
 Prompt sugerido:
 
 ```text
-Use $pulse-03-outlook to scan today's received and sent messages whose body contains @agent_data.
+Use $pulse-03-outlook to scan received and sent messages since the last successful run whose body contains @agent_data.
 ```
 
 Reglas:
 
-- Solo mensajes del dia, salvo que pidas otra fecha.
+- Usar `prepare_incremental_sync_window` para calcular `scan_from` y `scan_to`.
 - Debe existir `@agent_data` en el cuerpo.
+- Registrar la ejecucion con `record_automation_run`.
 - Siempre proponer, nunca autoaprobar.
 
 ### 10. Escanear Zoom
@@ -240,13 +248,16 @@ Reglas:
 Prompt sugerido:
 
 ```text
-Use $pulse-04-zoom to scan today's messages in [0] Zoom AI companion whose body contains @agent_data.
+Use $pulse-04-zoom to scan messages since the last successful run in [0] Zoom AI companion.
 ```
 
 Reglas:
 
 - `SourceType = Zoom`.
 - `Direction = MeetingTranscript`.
+- La carpeta exacta `[0] Zoom AI companion` es la senal de captura.
+- No requiere `@agent_data`.
+- Registrar la ejecucion con `record_automation_run`.
 - Preservar la transcripcion original.
 - No resumir ni reescribir antes de almacenar.
 
@@ -316,6 +327,7 @@ Antes de registrar o aprobar evidencia, Codex debe confirmar o proponer:
 - Ubicacion de listas y folder wiki cuando se conecta a un Pulse existente.
 - Timezone IANA del usuario para automatizacion.
 - Confirmacion antes de crear una automation personal con `automation_update`.
+- Usuario que ejecuta la automatizacion para poder registrar auditoria en `Automation Runs`.
 - Codigo de oportunidad, si existe.
 - SR, si existe.
 - `OpportunityKey` o `DiscoveryId` cuando aun no hay codigo/SR.
@@ -392,7 +404,9 @@ Reemplaza estos placeholders con capturas reales despues de ejecutar el flujo:
 - Indice stale: ejecuta `refresh_knowledge_index` antes de confiar en la respuesta.
 - Resultado metadata-only: falta fetch de los `.md`; usa SharePoint para recuperar documentos antes de responder por contenido.
 - SharePoint write no confirmado: no reportes exito hasta que una herramienta SharePoint o flujo Graph confirme la escritura.
-- Outlook no detecta candidatos: verifica que `@agent_data` este en el cuerpo del correo y que el filtro sea del dia actual.
+- Outlook no detecta candidatos: verifica que `@agent_data` este en el cuerpo del correo y que `scan_from` / `scan_to` cubran el mensaje.
+- Zoom no detecta candidatos: verifica que el correo este en la carpeta exacta `[0] Zoom AI companion` y dentro de la ventana incremental; no agregues `@agent_data` solo para Zoom.
+- PC apagada o ejecucion perdida: revisa `Automation Runs`; la siguiente ejecucion debe partir del ultimo `NextScanFrom` exitoso.
 
 ## Proxima Iteracion Con Capturas
 

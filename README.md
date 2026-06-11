@@ -1,6 +1,6 @@
 # Oracle Opportunity Pulse for Codex
 
-Codex marketplace repository for installing the `oracle-opportunity-pulse` plugin, shown in Codex as Oracle Opportunity Pulse. The plugin helps Codex manage Oracle opportunity traceability through normalized SharePoint lists, Markdown evidence files, Slack channel links, Outlook messages tagged with `@agent_data`, Zoom AI Companion transcripts, manual notes, and a SharePoint-backed Knowledge Wiki.
+Codex marketplace repository for installing the `oracle-opportunity-pulse` plugin, shown in Codex as Oracle Opportunity Pulse. The plugin helps Codex manage Oracle opportunity traceability through normalized SharePoint lists, Markdown evidence files, Slack channel links, Outlook messages tagged with `@agent_data`, Zoom AI Companion transcripts from a dedicated Outlook folder, manual notes, incremental per-user source sync, and a SharePoint-backed Knowledge Wiki.
 
 For the Spanish operator guide, see [`docs/operator-guide-es.md`](docs/operator-guide-es.md).
 
@@ -10,17 +10,17 @@ For the Spanish operator guide, see [`docs/operator-guide-es.md`](docs/operator-
 
 ## `pulse-01-setup` Skill
 
-`pulse-01-setup` is the guided installer and connector for Oracle Opportunity Pulse. It supports `install_new` for a new shared SharePoint Pulse and `connect_existing` for users joining an existing Pulse. It creates or validates the `Opportunities` and `Knowledge Items` list payloads, root folders, `_config/pulse-profile.json`, `_index`, `_templates`, pending queues, and per-opportunity folder structures. It owns structure; the wiki skill owns indexing and query.
+`pulse-01-setup` is the guided installer and connector for Oracle Opportunity Pulse. It supports `install_new` for a new shared SharePoint Pulse and `connect_existing` for users joining an existing Pulse. It creates or validates the `Opportunities`, `Knowledge Items`, and `Automation Runs` list payloads, root folders, `_config/pulse-profile.json`, `_index`, `_templates`, pending queues, and per-opportunity folder structures. It owns structure; the wiki skill owns indexing and query.
 
 ## `pulse-02-automation` Skill
 
-`pulse-02-automation` validates the active Pulse connection and prepares each user's personal daily Codex automation. The default schedule is 18:00 in the user's IANA timezone. The automation scans that user's Outlook received/sent messages and Zoom AI Companion folder, proposes candidates, and waits for approval before SharePoint writes.
+`pulse-02-automation` validates the active Pulse connection and prepares each user's personal daily Codex automation. The default schedule is 18:00 in the user's IANA timezone. The automation scans since the last successful run for that user/source/direction, proposes candidates, records `Automation Runs` audit/watermark rows, and waits for approval before final SharePoint evidence writes.
 
 ## Source Capture Skills
 
-`pulse-03-outlook` scans current-day received and sent Outlook messages whose body contains `@agent_data`, proposes opportunity classification, and waits for approval before storing evidence.
+`pulse-03-outlook` scans received and sent Outlook messages inside the incremental sync window whose body contains `@agent_data`, proposes opportunity classification, and waits for approval before storing evidence.
 
-`pulse-04-zoom` scans the exact Outlook folder `[0] Zoom AI companion`, treats valid messages as Zoom transcript evidence, and keeps transcripts unchanged.
+`pulse-04-zoom` scans every message inside the incremental sync window from the exact Outlook folder `[0] Zoom AI companion`, treats valid messages as Zoom transcript evidence, and keeps transcripts unchanged. Zoom does not require `@agent_data`.
 
 `pulse-05-slack` registers Slack channel links as `SourceType = Slack`. V1 stores the link only and does not claim Slack message reads unless a Slack API connector/token is explicitly available.
 
@@ -85,7 +85,7 @@ Release notes are maintained on GitHub Releases:
 Users can add the marketplace with any of these forms:
 
     codex plugin marketplace add jgangini/codex-plugin-oracle-opportunity-pulse
-    codex plugin marketplace add jgangini/codex-plugin-oracle-opportunity-pulse@v1.0.1
+    codex plugin marketplace add jgangini/codex-plugin-oracle-opportunity-pulse@v1.0.2
     codex plugin marketplace add https://github.com/jgangini/codex-plugin-oracle-opportunity-pulse.git
 
 For local testing before publishing:
@@ -100,7 +100,7 @@ Then open Codex, find Oracle Opportunity Pulse in the plugin list, install it if
 
     codex plugin marketplace upgrade oracle-opportunity-pulse
 
-Pinned installs can be upgraded by changing the Git ref, for example from `v1.0.1` to a newer release tag or to `main`.
+Pinned installs can be upgraded by changing the Git ref, for example from `v1.0.1` to `v1.0.2`, a newer release tag, or `main`.
 
 ## Evidence And Governance Standard
 
@@ -116,7 +116,7 @@ Oracle Opportunity Pulse separates source evidence, classification, approval, an
 
 Outlook and Zoom candidates must be proposed first and approved explicitly before final storage. Normal wiki queries use approved Knowledge Items by default and exclude `_pending` unless the user asks for pending material.
 
-Daily synchronization is personal per user. The shared Pulse is stored in SharePoint, but each user validates their own connectors and creates their own 18:00 local automation.
+Daily synchronization is personal per user. The shared Pulse is stored in SharePoint, but each user validates their own connectors and creates their own 18:00 local automation. The `Automation Runs` list stores per-user/source/direction audit rows and `NextScanFrom` watermarks so the next run catches up from the last successful sync with a 10 minute overlap and source-id deduplication.
 
 ## Marketplace Layout
 
@@ -138,9 +138,9 @@ That keeps installation flexible across GitHub shorthand, HTTPS Git URLs, SSH Gi
 
 * `pulse-00-orchestrator`: main opportunity and evidence orchestrator.
 * `pulse-01-setup`: guided SharePoint install/connect plus list, folder, template, profile, and index foundation setup.
-* `pulse-02-automation`: personal daily automation validation and scheduling preparation.
-* `pulse-03-outlook`: current-day Outlook `@agent_data` candidate capture.
-* `pulse-04-zoom`: Zoom AI Companion transcript capture from Outlook.
+* `pulse-02-automation`: personal daily automation validation, scheduling preparation, and incremental watermark guidance.
+* `pulse-03-outlook`: incremental Outlook `@agent_data` candidate capture.
+* `pulse-04-zoom`: incremental Zoom AI Companion transcript capture from the exact Outlook folder.
 * `pulse-05-slack`: Slack channel link registration.
 * `pulse-06-notes`: manual Markdown note capture.
 * `pulse-07-wiki`: Knowledge Wiki configuration, refresh, query, timeline, backlinks, and link suggestions.
