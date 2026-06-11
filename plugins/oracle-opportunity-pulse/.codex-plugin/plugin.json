@@ -1,0 +1,44 @@
+{
+  "name": "oracle-opportunity-pulse",
+  "version": "1.0.1",
+  "description": "Manage guided Oracle opportunity Pulse setup, normalized SharePoint lists, Markdown evidence, personal automation, and a SharePoint-backed Knowledge Wiki.",
+  "author": {
+    "name": "Joel Ganggini"
+  },
+  "license": "MIT",
+  "keywords": [
+    "oracle",
+    "opportunities",
+    "sharepoint",
+    "outlook",
+    "slack",
+    "zoom",
+    "automation",
+    "markdown"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Oracle Opportunity Pulse",
+    "shortDescription": "Manage Oracle opportunity lists and wiki evidence.",
+    "longDescription": "Manages guided installation or connection to a shared SharePoint Pulse, normalized Oracle opportunity and knowledge item lists, Markdown evidence from Slack channel links, tagged Outlook messages, Zoom AI Companion transcripts, manual notes, personal daily automation preparation, and a SharePoint-backed Knowledge Wiki index.",
+    "developerName": "Joel Ganggini",
+    "category": "Oracle",
+    "capabilities": [
+      "Interactive",
+      "Write",
+      "Local files"
+    ],
+    "defaultPrompt": [
+      "Use pulse-01-setup to install a new Pulse or connect to an existing one.",
+      "Use pulse-02-automation to validate sources and prepare my personal 18:00 daily automation.",
+      "Use pulse-01-setup to create the Oracle Opportunity Pulse lists, shared profile, and base folders.",
+      "Use pulse-99-test to check that SharePoint, Outlook, and Slack are ready.",
+      "Use pulse-05-slack to register this Slack channel for an Oracle opportunity.",
+      "Use pulse-07-wiki to query the Oracle Opportunity Pulse Knowledge Wiki."
+    ],
+    "brandColor": "#C74634",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo.png"
+  }
+}

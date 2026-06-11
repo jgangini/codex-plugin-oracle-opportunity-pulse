@@ -1,0 +1,19 @@
+interface:
+  display_name: "Oracle Opportunity Pulse"
+  short_description: "Oracle opportunity lists and wiki"
+  default_prompt: "Use $pulse-00-orchestrator to register or query an Oracle opportunity signal in the Knowledge Wiki."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Local MCP tools for opportunity registration, candidate proposal, wiki paths, indexing, and query"
+    - type: "mcp"
+      value: "microsoft_outlook_email"
+      description: "Outlook connector for daily @agent_data and Zoom AI Companion messages"
+    - type: "mcp"
+      value: "microsoft_sharepoint"
+      description: "SharePoint connector for Markdown wiki files and document lookup"
+
+policy:
+  allow_implicit_invocation: true

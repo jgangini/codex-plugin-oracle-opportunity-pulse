@@ -1,0 +1,16 @@
+interface:
+  display_name: "Opportunity Pulse Setup"
+  short_description: "Create lists and base folders"
+  default_prompt: "Use $pulse-01-setup to create or validate the Oracle Opportunity Pulse lists and folders."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Local setup and validation tools"
+    - type: "mcp"
+      value: "microsoft_sharepoint"
+      description: "SharePoint connector for folder/list-adjacent workflows"
+
+policy:
+  allow_implicit_invocation: true

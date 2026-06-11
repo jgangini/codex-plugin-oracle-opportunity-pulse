@@ -1,0 +1,22 @@
+interface:
+  display_name: "Opportunity Pulse Automation"
+  short_description: "Prepare personal daily sync"
+  default_prompt: "Use $pulse-02-automation to validate my Pulse sources and prepare my personal 18:00 daily sync automation."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Local Pulse validation and automation preparation tools"
+    - type: "mcp"
+      value: "microsoft_outlook_email"
+      description: "Outlook connector for received, sent, and Zoom AI Companion scans"
+    - type: "mcp"
+      value: "microsoft_sharepoint"
+      description: "SharePoint connector for Pulse profile, lists, folders, and wiki evidence"
+    - type: "mcp"
+      value: "slack"
+      description: "Slack connector readiness for channel registration workflows"
+
+policy:
+  allow_implicit_invocation: true

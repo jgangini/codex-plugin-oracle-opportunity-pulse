@@ -1,0 +1,13 @@
+interface:
+  display_name: "Opportunity Pulse Test"
+  short_description: "Validate connectors and smoke tests"
+  default_prompt: "Use $pulse-99-test to verify that Oracle Opportunity Pulse is configured for testing."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Local readiness and smoke-test tools"
+
+policy:
+  allow_implicit_invocation: true

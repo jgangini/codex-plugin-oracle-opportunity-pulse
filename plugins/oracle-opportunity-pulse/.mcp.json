@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "oracle-opportunity-pulse": {
+      "command": "C:\\Users\\jeggg\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+      "args": [
+        "./scripts/opportunity_pulse_server.py"
+      ]
+    }
+  }
+}

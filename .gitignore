@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local plugin/runtime state
+OracleOpportunityPulse/
+oracle-opportunity-pulse-state.json
+outbox/
+*.log
+*.tmp
+
+# Local secrets and connector exports
+.env
+.env.*
+*.secret
+*.token
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Codex local-only caches
+.codex/skills/
+.codex/cache/
+.codex/tmp/
+
+# Draft screenshots; keep docs/images/.gitkeep and curated PNGs
+docs/images/drafts/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

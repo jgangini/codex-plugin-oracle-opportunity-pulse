@@ -1,0 +1,16 @@
+interface:
+  display_name: "Opportunity Pulse Wiki"
+  short_description: "Query SharePoint Markdown knowledge"
+  default_prompt: "Use $pulse-07-wiki to query the opportunity Knowledge Wiki."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Knowledge Wiki configuration, indexing, query, timeline, backlinks, and link suggestion tools"
+    - type: "mcp"
+      value: "microsoft_sharepoint"
+      description: "SharePoint connector for Markdown files, index files, and document library browsing"
+
+policy:
+  allow_implicit_invocation: true
