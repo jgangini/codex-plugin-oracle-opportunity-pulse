@@ -74,18 +74,11 @@ The SharePoint document library is organized as a portable Markdown wiki:
 
 The `_index` folder is rebuildable from SharePoint lists and Markdown snapshots. SharePoint remains the source of truth.
 
-## What's New in v1.0.1
+## Releases
 
-* Renamed skills to a short numbered flow: `pulse-00-orchestrator`, `pulse-01-setup`, `pulse-02-automation`, source skills, wiki, and test.
-* Added the Oracle Opportunity Pulse local MCP server and Codex skills.
-* Added guided SharePoint setup for installing a new Pulse or connecting to an existing shared Pulse.
-* Added non-secret shared Pulse profiles in `_config/pulse-profile.json`.
-* Added personal daily automation preparation at 18:00 in each user's timezone.
-* Added normalized `Opportunities` and `Knowledge Items` SharePoint list planning.
-* Added Discovery-stage opportunity support before opportunity code or SR exists.
-* Added Outlook, Zoom, Slack, and Notes source workflows.
-* Added the SharePoint-backed Knowledge Wiki with `_index`, `_templates`, tags, backlinks, timelines, and query helpers.
-* Added Python unit tests and smoke-testable MCP tools.
+Release notes are maintained on GitHub Releases:
+
+    https://github.com/jgangini/codex-plugin-oracle-opportunity-pulse/releases
 
 ## Install From GitHub
 
