@@ -1,6 +1,14 @@
 # Oracle Opportunity Pulse for Codex
 
-Codex marketplace repository for installing the `oracle-opportunity-pulse` plugin, shown in Codex as Oracle Opportunity Pulse. The plugin helps Codex manage Oracle opportunity traceability through normalized SharePoint lists, Markdown evidence files, Slack channel links, Outlook messages tagged with `@agent_data`, Zoom AI Companion transcripts from a dedicated Outlook folder, manual notes, incremental per-user source sync, and a SharePoint-backed Knowledge Wiki.
+Codex marketplace repository for installing the `oracle-opportunity-pulse` plugin, shown in Codex as Oracle Opportunity Pulse.
+
+Oracle Opportunity Pulse centralizes opportunity signals from Outlook, Zoom, Slack channel links, and manual notes. Codex proposes the client, opportunity, SR, source type, and evidence; a human approves or corrects the proposal; then approved information is stored in normalized SharePoint lists and preserved as Markdown evidence in a SharePoint-backed Knowledge Wiki.
+
+![Oracle Opportunity Pulse architecture](docs/images/pulse-1.png)
+
+Daily synchronization is personal per user. At 18:00 local time, the automation scans from the last successful `Automation Runs.NextScanFrom`, applies the right rule per source, deduplicates events, proposes classifications, records the run, and refreshes the wiki index after approved evidence is stored.
+
+![Oracle Opportunity Pulse incremental source sync](docs/images/pulse-2.png)
 
 For the Spanish operator guide, see [`docs/operator-guide-es.md`](docs/operator-guide-es.md).
 
@@ -35,16 +43,6 @@ After any approved source content is written to SharePoint, refresh the Knowledg
 ## `pulse-99-test` Skill
 
 `pulse-99-test` validates connector readiness and runs the end-to-end smoke path across setup, ingestion planning, index refresh, and wiki query.
-
-## Visual Overview
-
-The first diagram shows the end-to-end architecture: source channels flow into the Codex plugin, pass through a human approval gate, and then land in normalized SharePoint lists plus a Markdown Knowledge Wiki.
-
-![Oracle Opportunity Pulse architecture](docs/images/pulse-1.png)
-
-The second diagram focuses on the personal 18:00 incremental sync: each user scans from the last successful watermark, deduplicates source events, proposes classifications, records `Automation Runs`, and refreshes the wiki index after approved evidence is stored.
-
-![Oracle Opportunity Pulse incremental source sync](docs/images/pulse-2.png)
 
 ## Knowledge Wiki Layout
 
