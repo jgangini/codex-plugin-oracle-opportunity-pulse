@@ -77,6 +77,16 @@ Las skills de fuente solo capturan o registran:
 
 Regla de handoff: despues de aprobar y guardar evidencia en SharePoint, refresca el indice de la Knowledge Wiki antes de confiar en la busqueda.
 
+## Diagramas Del Flujo
+
+El primer diagrama muestra la arquitectura general: las fuentes entran al plugin Codex, pasan por una compuerta de aprobacion humana y terminan en listas SharePoint normalizadas junto con una wiki Markdown consultable.
+
+![Arquitectura Oracle Opportunity Pulse](images/pulse-1.png)
+
+El segundo diagrama muestra la sincronizacion incremental personal a las 18:00: cada usuario retoma desde el ultimo `NextScanFrom`, escanea fuentes, deduplica eventos, propone clasificacion, registra `Automation Runs` y refresca el indice de la wiki despues de guardar evidencias aprobadas.
+
+![Flujo incremental Oracle Opportunity Pulse](images/pulse-2.png)
+
 ## Primer Uso
 
 ### 1. Habilitar conectores

@@ -36,6 +36,16 @@ After any approved source content is written to SharePoint, refresh the Knowledg
 
 `pulse-99-test` validates connector readiness and runs the end-to-end smoke path across setup, ingestion planning, index refresh, and wiki query.
 
+## Visual Overview
+
+The first diagram shows the end-to-end architecture: source channels flow into the Codex plugin, pass through a human approval gate, and then land in normalized SharePoint lists plus a Markdown Knowledge Wiki.
+
+![Oracle Opportunity Pulse architecture](docs/images/pulse-1.png)
+
+The second diagram focuses on the personal 18:00 incremental sync: each user scans from the last successful watermark, deduplicates source events, proposes classifications, records `Automation Runs`, and refreshes the wiki index after approved evidence is stored.
+
+![Oracle Opportunity Pulse incremental source sync](docs/images/pulse-2.png)
+
 ## Knowledge Wiki Layout
 
 The SharePoint document library is organized as a portable Markdown wiki:
