@@ -1,0 +1,16 @@
+interface:
+  display_name: "Opportunity Pulse Zoom"
+  short_description: "Capture Zoom transcript evidence"
+  default_prompt: "Use $pulse-04-zoom to scan [0] Zoom AI companion transcripts."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "microsoft_outlook_email"
+      description: "Outlook connector for Zoom AI Companion folder"
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Zoom candidate proposal and approval tools"
+
+policy:
+  allow_implicit_invocation: true

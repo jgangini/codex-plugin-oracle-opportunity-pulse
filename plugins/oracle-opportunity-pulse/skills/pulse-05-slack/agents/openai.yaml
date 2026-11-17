@@ -1,0 +1,16 @@
+interface:
+  display_name: "Opportunity Pulse Slack"
+  short_description: "Register Slack channel links"
+  default_prompt: "Use $pulse-05-slack to register this Slack channel for an opportunity."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Slack URL parsing and registration tools"
+    - type: "mcp"
+      value: "slack"
+      description: "Optional Slack connector for future Slack message workflows"
+
+policy:
+  allow_implicit_invocation: true
