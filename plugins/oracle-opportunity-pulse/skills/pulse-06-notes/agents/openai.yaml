@@ -1,0 +1,13 @@
+interface:
+  display_name: "Opportunity Pulse Notes"
+  short_description: "Add manual Markdown notes"
+  default_prompt: "Use $pulse-06-notes to add this Markdown note to an opportunity."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "oracle-opportunity-pulse"
+      description: "Manual note and opportunity query tools"
+
+policy:
+  allow_implicit_invocation: true
